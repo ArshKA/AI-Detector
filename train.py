@@ -1,17 +1,22 @@
 import torch
 import numpy as np
+import logging
 from transformers import TrainingArguments, Trainer, EarlyStoppingCallback
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score
-# import evaluate
 
 import config
 from data_utils import load_and_preprocess_data
 from model_utils import get_model
 
+logger = logging.getLogger(__name__)
+
 torch.manual_seed(config.SEED)
 np.random.seed(config.SEED)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(config.SEED)
+    logger.info(f"CUDA available. Set seed for CUDA to {config.SEED}")
+else:
+    logger.info("CUDA not available.")
 
 
 def compute_metrics(pred):
@@ -36,45 +41,19 @@ def compute_metrics(pred):
         'roc_auc': roc_auc
     }
 
-# accuracy_metric = evaluate.load("accuracy")
-# f1_metric = evaluate.load("f1")
-# precision_metric = evaluate.load("precision")
-# recall_metric = evaluate.load("recall")
-# roc_auc_metric = evaluate.load("roc_auc")
-
-# def compute_metrics_evaluate_lib(eval_pred):
-#     logits, labels = eval_pred
-#     predictions = np.argmax(logits, axis=-1)
-#     probs_positive_class = torch.softmax(torch.tensor(logits), dim=-1)[:, 1].numpy()
-#     acc_result = accuracy_metric.compute(predictions=predictions, references=labels)
-#     f1_result = f1_metric.compute(predictions=predictions, references=labels, average="binary", pos_label=1)
-#     precision_result = precision_metric.compute(predictions=predictions, references=labels, average="binary", pos_label=1)
-#     recall_result = recall_metric.compute(predictions=predictions, references=labels, average="binary", pos_label=1)
-#     try:
-#         roc_auc_result = roc_auc_metric.compute(references=labels, prediction_scores=probs_positive_class)
-#     except ValueError:
-#         roc_auc_result = {"roc_auc": 0.5}
-#     return {
-#         "accuracy": acc_result["accuracy"],
-#         "f1": f1_result["f1"],
-#         "precision": precision_result["precision"],
-#         "recall": recall_result["recall"],
-#         "roc_auc": roc_auc_result.get("roc_auc", 0.5)
-#     }
-
 def main():
-    print("Starting training process...")
-    print(f"Loading data for model: {config.MODEL_NAME}")
+    logger.info("Starting training process...")
+    logger.info(f"Loading data for model: {config.MODEL_NAME}")
     train_dataset, val_dataset, tokenizer = load_and_preprocess_data(tokenizer_name=config.MODEL_NAME)
 
     if train_dataset is None or len(train_dataset) == 0:
-        print("No training data loaded. Exiting.")
+        logger.warning("No training data loaded. Exiting.")
         return
 
-    print("Loading model...")
+    logger.info("Loading model...")
     model = get_model(model_name=config.MODEL_NAME, num_labels=2)
 
-    print("Defining training arguments...")
+    logger.info("Defining training arguments...")
     training_args = TrainingArguments(
         output_dir=config.OUTPUT_DIR,
         num_train_epochs=config.NUM_EPOCHS,
@@ -104,9 +83,10 @@ def main():
 
     callbacks = []
     if val_dataset:
+        logger.info("Early stopping enabled.")
         callbacks.append(EarlyStoppingCallback(early_stopping_patience=3, early_stopping_threshold=0.001))
 
-    print("Initializing Trainer...")
+    logger.info("Initializing Trainer...")
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -117,27 +97,33 @@ def main():
         callbacks=callbacks
     )
 
-    print("Starting training...")
+    logger.info("Starting training...")
     train_result = trainer.train()
-    print("Training finished.")
+    logger.info("Training finished.")
 
-    print(f"Saving LoRA adapter model to {config.OUTPUT_DIR}")
+    logger.info(f"Saving LoRA adapter model to {config.OUTPUT_DIR}")
     trainer.save_model(config.OUTPUT_DIR)
 
     metrics = train_result.metrics
+    logger.info(f"Training metrics: {metrics}")
     trainer.log_metrics("train", metrics)
     trainer.save_metrics("train", metrics)
     trainer.save_state()
+    logger.info("Training metrics, state, and model saved.")
 
     if val_dataset:
-        print("Evaluating on validation set...")
+        logger.info("Evaluating on validation set...")
         eval_metrics = trainer.evaluate()
         trainer.log_metrics("eval", eval_metrics)
         trainer.save_metrics("eval", eval_metrics)
-        print(f"Validation metrics: {eval_metrics}")
+        logger.info(f"Validation metrics: {eval_metrics}")
+    else:
+        logger.info("No validation set. Skipping evaluation.")
 
-    print(f"Model and tokenizer adapter saved to {config.OUTPUT_DIR}")
-    print("Training script completed.")
+    logger.info(f"Model and tokenizer adapter saved to {config.OUTPUT_DIR}")
+    logger.info("Training script completed.")
 
 if __name__ == "__main__":
+    # Configure logging specifically for when the script is run directly
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     main()
